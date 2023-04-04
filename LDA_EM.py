@@ -2,7 +2,6 @@
 import os
 import nltk
 import time
-
 import warnings
 
 import numpy             as np
@@ -163,12 +162,33 @@ gamma = alpha + np.ones( ( M,  k ) ) * N.reshape( -1, 1 ) / k
 
 
 # %% Define the E-step of the EM algorithm
-def E_step( docs, phi, gamma, alpha, beta ):
+
+# Code from 
+# https://github.com/naturale0/NLP-Do-It-Yourself/blob/main/NLP_with_PyTorch/3_document-embedding/3-1.%20latent%20dirichlet%20allocation.ipynb
+def E_step_ref(docs, phi, gamma, alpha, beta):
+    """
+    Minorize the joint likelihood function via variational inference.
+    This is the E-step of variational EM algorithm for LDA.
+    """
+    # optimize phi
+    for m in range(M):
+        phi[m, :N[m], :] = (beta[:, docs[m]] * np.exp(psi(gamma[m, :]) - psi(gamma[m, :].sum())).reshape(-1, 1)).T
+
+        # Normalize phi
+        phi[m, :N[m]] /= phi[m, :N[m]].sum(axis=1).reshape(-1, 1)
+        if np.any(np.isnan(phi)):
+            raise ValueError("phi nan")
+
+    # optimize gamma
+    gamma = alpha + phi.sum(axis=1)
+
+    return phi, gamma
+
+
+def E_step_brute_force( docs, phi, gamma, alpha, beta ):
 
     # Optimize phi
-    # The number of topics:
-    k = len( alpha )
-    
+    # The number of topics:    
     for m in range( M ):
 
         # "phi" is a 2D array
@@ -180,7 +200,7 @@ def E_step( docs, phi, gamma, alpha, beta ):
                 phi[ m, n, i ] = beta[ i, docs[ m ][ n ] ] * np.exp( psi( gamma[ m, i ] ) - psi( gamma[ m, : ].sum( ) ) )
 
             # Once the calculation is complete, normalize over the 3rd axis
-            # phi[ m, n, : ] /= phi[ m, n, : ].sum( )
+            phi[ m, n, : ] /= phi[ m, n, : ].sum( )
 
     if np.any( np.isnan( phi ) ):
         raise ValueError( "phi nan" )
@@ -195,7 +215,7 @@ def E_step( docs, phi, gamma, alpha, beta ):
 
     return phi, gamma
 
-def E_step_opt( docs, phi, gamma, alpha, beta ):
+def E_step( docs, phi, gamma, alpha, beta ):
 
     # Phi is a M x max( N ) x k array
     # Beta is a k x V array
@@ -210,7 +230,9 @@ def E_step_opt( docs, phi, gamma, alpha, beta ):
 
     # Create Gamma, also to a size of M x max( N ) x k
     # First, calculate the 2D array 
-    tmp = np.exp( psi( gamma ) - psi( gamma.sum( axis = 1 ) )[ :, None ] )
+    # [TODO] [Moses C. Nah] [2023.04.04] keepdims=
+    # https://stackoverflow.com/questions/41752442/dividing-3d-array-by-2d-row-sums
+    tmp = np.exp( psi( gamma ) - psi( gamma.sum( axis = 1, keepdims=True ) ) )
 
     # Expand this array to axis 1 with max( N )
     gamma3D = np.stack( [ tmp for _ in range( max( N ) ) ], axis = 1 )
@@ -218,8 +240,11 @@ def E_step_opt( docs, phi, gamma, alpha, beta ):
     # Update phi, based on the equation
     phi = beta3D * gamma3D
 
-    # Normalize along the topic
-    # phi /= sum( phi, axis = 2 )
+    # [TODO] [Moses C. Nah] [2023.04.04] keepdims=
+    # https://stackoverflow.com/questions/41752442/dividing-3d-array-by-2d-row-sums
+    # [REF] https://stackoverflow.com/questions/26248654/how-to-return-0-with-divide-by-zero
+    phi_sum = phi.sum( axis = 2, keepdims = True )
+    phi = np.divide( phi, phi_sum, out = np.zeros_like( phi ), where=( phi_sum!=0 ) )
     
     # Update Gamma
     # Gamma is a M x k matrix
@@ -235,77 +260,26 @@ def E_step_opt( docs, phi, gamma, alpha, beta ):
 
 # %% Define the M-step of the EM algorithm
 
-def M_step( docs, phi, gamma, alpha, beta, M ):
-    """
-        maximize the lower bound of the likelihood.
-        This is the M-step of variational EM algorithm for (smoothed) LDA.    
-        update of alpha follows from appendix A.2 of Blei et al., 2003.
-    """
-
-    # =================================
-    # update alpha
-    # =================================
-    # Set maximum iterations as 10000
-    max_iter = 10000
-    tol = 1e-6
-
-    # The number of topics
-    k = len( alpha )
-
-    for _ in range( max_iter ):
-
-        # store old value
-        alpha_old = alpha.copy( )
-
-        # Calculate h array
-        h = -M * polygamma( 1, alpha )
-
-        # Calculate gradient (g) array
-        g = M * psi( alpha.sum( ) ) - M * psi( alpha ) + ( psi( gamma ) - psi( gamma.sum( axis = 1 ) ) ).sum( axis = 0 )
-
-        # Calculate c 
-        c = sum( g / h ) / ( 1.0/z + sum( 1.0/h ) )
-
-        alpha -= ( g - c ) / h
-
-        # check convergence
-        err = np.sqrt( np.mean( ( alpha - alpha_old ) ** 2 ) )
-
-        # Check if error smaller than tolerance
-        crit = err < tol
-        if crit:
-            break
-
-    else:
-        warnings.warn(f"max_iter={max_iter} reached: values might not be optimal.")
-    
-    # =================================
-    # update beta
-    # =================================
-
-    # Define phi_{dni}w_{dn}^{j} first
-    # phi[ :, :, i ]
-
-    # Iterating over the vocabularies
-    for j in range( V ):
-        beta[ :, j ] = np.array( [ phi_dot_w( docs, phi, m, j ) for m in range( M ) ] ).sum( axis = 0 )
-
-    beta /= beta.sum(axis=1).reshape(-1, 1)
-
-
-    return alpha, beta
-
 def M_step_ref( docs, phi, gamma, alpha, beta, M ):
-
     # update alpha
-    alpha = update( alpha, gamma, M )
+    alpha = update(alpha, gamma, M)
     
     # update beta
-    for j in range( V ):
-        beta[ :, j ] = np.array( [ phi_dot_w(docs, phi, m, j) for m in range(M)]).sum(axis=0)
+    for j in range(V):
+        beta[:, j] = np.array([phi_dot_w(docs, phi, m, j) for m in range(M)]).sum(axis=0)
     beta /= beta.sum(axis=1).reshape(-1, 1)
 
     return alpha, beta
+
+def phi_dot_w(docs, phi, d, j):
+    """
+    \sum_{n=1}^{N_d} ϕ_{dni} w_{dn}^j
+    """
+    # doc = np.zeros(docs[m].shape[0] * V, dtype=int)
+    # doc[np.arange(0, docs[m].shape[0] * V, V) + docs[m]] = 1
+    # doc = doc.reshape(-1, V)
+    # lam += phi[m, :N[m], :].T @ doc
+    return (docs[d] == j) @ phi[ d, :N[d], :]
 
 def update(var, vi_var, const, max_iter=10000, tol=1e-6):
     """
@@ -325,8 +299,8 @@ def update(var, vi_var, const, max_iter=10000, tol=1e-6):
             + (psi(vi_var) - psi_sum).sum(axis=0)
 
         # H = diag(h) + 1z1'
-        z =  const * polygamma(1, var.sum())  # z: Hessian constant component
-        h = -const * polygamma(1, var)        # h: Hessian diagonal component
+        z = const * polygamma(1, var.sum())  # z: Hessian constant component
+        h = -const * polygamma(1, var)       # h: Hessian diagonal component
         c = (g / h).sum() / (1./z + (1./h).sum())
 
         # update var
@@ -343,11 +317,38 @@ def update(var, vi_var, const, max_iter=10000, tol=1e-6):
     #print(err)
     return var
 
-def phi_dot_w( docs, phi, d, j ):
-    """
-        \sum_{n=1}^{N_d} ϕ_{dni} w_{dn}^j
-    """
-    return ( docs[ d ] == j ) @ phi[ d, :N[ d ], :]
+def M_step( docs, phi, gamma, alpha, beta, M ):
+    
+    # update alpha
+    alpha = update( alpha, gamma, M )
+
+    # Update Beta
+    # phi is a M x max( N ) x V array
+    # Documents is a M x max( N ) array
+
+    # First, create a 2D array with M x max( N )
+    tmp = np.zeros( ( M, max( N ) ) )
+
+    # Fill in the 
+    for m in range( M ):
+        tmp[ m, :N[ m ] ] = docs[ m ]
+
+    # Copy along the third axis 
+    w3D = np.tile( tmp, ( 1, 1, V ) )
+
+    # Create a 3D array with 
+    tmp2 = np.tile( np.arange( V ), ( M, max( N ), V ))    
+
+    # Mask the array
+    tmp3 = w3D * tmp2
+
+    # Conduct tensorproduct
+    beta = np.tensordot( phi, tmp3, axes = ( [ 0, 1], [0,1] ) )
+
+    print( beta.shape )
+
+    return alpha, beta
+
 
 
 # %% Other Functions
@@ -420,17 +421,19 @@ TOL = 0.1
 verbose = True
 lb = -np.inf
 
-phi1 = phi.copy( )
-phi2 = phi.copy( )
+phi1 = np.copy( phi )
+phi2 = np.copy( phi )
+phi3 = np.copy( phi )
 
-gamma1 = gamma.copy( )
-gamma2 = gamma.copy( )
+gamma1 = np.copy( gamma )
+gamma2 = np.copy( gamma )
+gamma3 = np.copy( gamma )
 
-alpha1 = alpha.copy( )
-alpha2 = alpha.copy( )
+alpha1 = np.copy( alpha )
+alpha2 = np.copy( alpha )
 
-beta1 = beta.copy( )
-beta2 = beta.copy( )
+beta1 = np.copy( beta )
+beta2 = np.copy( beta )
 
 for epoch in range( N_EPOCH ): 
 
@@ -438,23 +441,30 @@ for epoch in range( N_EPOCH ):
     lb_old = lb
 
     # The E-step
-    phi1, gamma1 =      E_step( docs, phi1, gamma1, alpha1, beta1 )
-    phi2, gamma2 =  E_step_opt( docs, phi2, gamma2, alpha2, beta2 )
-  
-    # Compare 
-    for i in range( phi1.shape[ 0 ] ):
-        for j in range( phi1.shape[ 1 ] ):
-            for l in range( phi1.shape[ 2 ] ):
-                assert( phi1[ i, j, l ] == phi2[ i, j, l ] )
-    
-    print( "Match! For epoch: " + str( epoch ) )
+    start = time.time( )
+    phi1, gamma1 =  E_step_brute_force( docs, phi1, gamma1, alpha1, beta1 )
+    end = time.time( )
+    print( "Brute Force Method: " + str( end-start) )
+
+    # start = time.time( )
+    # phi2, gamma2 = E_step_ref( docs, phi2, gamma2, alpha1, beta1 )
+    # end = time.time( )
+    # print( "Reference Method: " + str( end-start) )
+
+    start = time.time( )
+    phi3, gamma3 = E_step( docs, phi3, gamma3, alpha1, beta1 )
+    end = time.time( )
+    print( "Optimized Method " + str( end-start) )
+
+    # assert( np.max( phi1 - phi2 ) <= 1e-9 )
+    assert( np.max( phi1 - phi3 ) <= 1e-9 )
 
     # The M-step
-    # alpha1, beta1  =     M_step( docs, phi, gamma, alpha1, beta1, M )    
-    # alpha2, beta2  = M_step_ref( docs, phi, gamma, alpha2, beta2, M )
+    alpha1, beta1  =     M_step( docs, phi, gamma, alpha1, beta1, M )    
+    alpha2, beta2  = M_step_ref( docs, phi, gamma, alpha2, beta2, M )
 
-    # assert( all( abs( alpha1 - alpha2 ) <= 1e-9 ) ) 
-    # print( "alpha match!" )
+    assert( np.max( beta1 - beta2 ) <= 1e-9 ) 
+    # print( "alpha match!" )/
 
 
     # check anomaly
@@ -474,8 +484,8 @@ for epoch in range( N_EPOCH ):
     if verbose:
         print(f"{epoch: 04}:  : {lb: .3f},  error: {err: .3f}")
     
-    if err < TOL:
-        break
+    # if err < TOL:
+    #     break
 
 else:
     warnings.warn(f"max_iter reached: values might not be optimal.")
