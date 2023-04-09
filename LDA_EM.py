@@ -160,7 +160,6 @@ for m, N_d in enumerate( N ):
 # N.reshape change N as a coulumn vector
 gamma = alpha + np.ones( ( M,  k ) ) * N.reshape( -1, 1 ) / k
 
-
 # %% Define the E-step of the EM algorithm
 
 # Code from 
@@ -172,15 +171,15 @@ def E_step_ref(docs, phi, gamma, alpha, beta):
     """
     # optimize phi
     for m in range(M):
-        phi[m, :N[m], :] = (beta[:, docs[m]] * np.exp(psi(gamma[m, :]) - psi(gamma[m, :].sum())).reshape(-1, 1)).T
+        phi[ m, :N[ m ], :] = ( beta[ :, docs[ m ] ] * np.exp( psi( gamma[ m, : ] ) - psi( gamma[ m, : ].sum( ) ) ).reshape( -1, 1 ) ).T
 
         # Normalize phi
-        phi[m, :N[m]] /= phi[m, :N[m]].sum(axis=1).reshape(-1, 1)
+        phi[ m, :N[ m ] ] /= phi[ m, :N[ m ]].sum( axis = 1 ).reshape( -1, 1 )
         if np.any(np.isnan(phi)):
             raise ValueError("phi nan")
 
     # optimize gamma
-    gamma = alpha + phi.sum(axis=1)
+    gamma = alpha + phi.sum( axis = 1 )
 
     return phi, gamma
 
@@ -225,8 +224,8 @@ def E_step( docs, phi, gamma, alpha, beta ):
     # Create a 3D beta array, to a size of M x max( N ) x k
     beta3D = np.zeros( ( M, max( N ), k ) )
 
-    for i in range( M ):
-        beta3D[ i, :N[ i ], : ] = beta[ :, docs[ i ] ].T
+    for d in range( M ):
+        beta3D[ d, :N[ d ], : ] = np.copy( beta[ :, docs[ d ] ].T )
 
     # Create Gamma, also to a size of M x max( N ) x k
     # First, calculate the 2D array 
@@ -260,14 +259,94 @@ def E_step( docs, phi, gamma, alpha, beta ):
 
 # %% Define the M-step of the EM algorithm
 
-def M_step_ref( docs, phi, gamma, alpha, beta, M ):
+
+def M_step_tmp( docs, phi, gamma, alpha, beta, M ):
     # update alpha
     alpha = update(alpha, gamma, M)
     
     # update beta
+    # phi is simply M x max( N ) x k
+    # w_dn^{j} is   M x max( N ) x V
+
+    # First, create w_nd{ j } array
+    # We 
+    tmp = np.arange( V )
+    ts = time.time( )
+    tmp2 = np.transpose( np.tile( tmp[:, np.newaxis, np.newaxis], (1, M, max( N ) ) ), ( 1,2, 0 ) )
+    tf = time.time( )
+
+    print( "1 ", str( tf - ts ) ) 
+
+    # Create the matrix for masking
+    tmp3 = np.zeros( ( M, max( N ), V ), dtype = int )
+
+    ts = time.time( )
+
+    for m in range( M ):
+        tmp3[ m, :N[ m ], : ] =  np.tile( docs[ m ], ( V, 1 ) ).T
+
+    tf = time.time( )
+    print( "2 ", str( tf - ts ) ) 
+
+    ts = time.time( )
+    mask = ( tmp2 == tmp3 )
+    tf = time.time( )
+    print( "2.5 ", str( tf- ts ) )
+
+    ts = time.time( )
+    ttmp = tmp2 - tmp3
+    
+    tttmp = np.zeros_like( phi )
+
+    for i in range( phi.shape[ 0 ] ):
+        for j in range( phi.shape[ 1 ] ):
+            for k in range( phi.shape[ 2 ] ):
+                tttmp[ i,j, k ] = ( ttmp[ i,j,k] is 0 )
+
+    tf = time.time( )
+    print( "2.8 ", str( tf- ts ) )    
+    # Eventually, mask is a M x max( N ) x V matrix
+    # Multiply mask with phi which is a M x max( N ) x k matrix
+    # Reshape
+    ts = time.time( )
+    tmp_phi  = phi.transpose( 2, 0, 1 ).reshape( k, -1 )
+    tmp_mask = mask.transpose( 2, 0, 1 ).reshape( V, -1 ).T
+    tf = time.time( )
+
+    print( "3 ", str( tf - ts ) ) 
+
+    ts = time.time( )
+    beta = tmp_phi @ tmp_mask
+    tf = time.time( )
+
+    print( "4 ", str( tf - ts ) ) 
+    
+    ts = time.time( )
+    beta /= beta.sum( axis = 1).reshape(-1, 1) 
+    tf = time.time( )
+
+    print( "5 ", str( tf - ts ) ) 
+
+    return alpha, beta
+
+def M_step( docs, phi, gamma, alpha, beta, M ):
+    # update alpha
+    start = time.time( )
+    alpha = update(alpha, gamma, M)
+    
+    end = time.time( )
+    print( "INSIDE1 ", str( end - start ) )
+
+    # update beta
+    start = time.time( )
+
     for j in range(V):
         beta[:, j] = np.array([phi_dot_w(docs, phi, m, j) for m in range(M)]).sum(axis=0)
-    beta /= beta.sum(axis=1).reshape(-1, 1)
+
+    beta /= beta.sum(axis=1).reshape(-1, 1) 
+
+    end = time.time( )
+    print( "INSIDE2 ", str( end - start ) )
 
     return alpha, beta
 
@@ -316,40 +395,6 @@ def update(var, vi_var, const, max_iter=10000, tol=1e-6):
     
     #print(err)
     return var
-
-def M_step( docs, phi, gamma, alpha, beta, M ):
-    
-    # update alpha
-    alpha = update( alpha, gamma, M )
-
-    # Update Beta
-    # phi is a M x max( N ) x V array
-    # Documents is a M x max( N ) array
-
-    # First, create a 2D array with M x max( N )
-    tmp = np.zeros( ( M, max( N ) ) )
-
-    # Fill in the 
-    for m in range( M ):
-        tmp[ m, :N[ m ] ] = docs[ m ]
-
-    # Copy along the third axis 
-    w3D = np.tile( tmp, ( 1, 1, V ) )
-
-    # Create a 3D array with 
-    tmp2 = np.tile( np.arange( V ), ( M, max( N ), V ))    
-
-    # Mask the array
-    tmp3 = w3D * tmp2
-
-    # Conduct tensorproduct
-    beta = np.tensordot( phi, tmp3, axes = ( [ 0, 1], [0,1] ) )
-
-    print( beta.shape )
-
-    return alpha, beta
-
-
 
 # %% Other Functions
 def dg( gamma, d, i ):
@@ -421,14 +466,6 @@ TOL = 0.1
 verbose = True
 lb = -np.inf
 
-phi1 = np.copy( phi )
-phi2 = np.copy( phi )
-phi3 = np.copy( phi )
-
-gamma1 = np.copy( gamma )
-gamma2 = np.copy( gamma )
-gamma3 = np.copy( gamma )
-
 alpha1 = np.copy( alpha )
 alpha2 = np.copy( alpha )
 
@@ -440,40 +477,43 @@ for epoch in range( N_EPOCH ):
     # store old value
     lb_old = lb
 
-    # The E-step
-    start = time.time( )
-    phi1, gamma1 =  E_step_brute_force( docs, phi1, gamma1, alpha1, beta1 )
-    end = time.time( )
-    print( "Brute Force Method: " + str( end-start) )
+    # # The E-step
+    # start = time.time( )
+    # phi1, gamma1 =  E_step_brute_force( docs, phi1, gamma1, alpha, beta )
+    # end = time.time( )
+    # print( "Brute Force Method: " + str( end-start) )
 
     # start = time.time( )
-    # phi2, gamma2 = E_step_ref( docs, phi2, gamma2, alpha1, beta1 )
+    # phi2, gamma2 = E_step_ref( docs, phi2, gamma2, alpha, beta )
     # end = time.time( )
     # print( "Reference Method: " + str( end-start) )
 
     start = time.time( )
-    phi3, gamma3 = E_step( docs, phi3, gamma3, alpha1, beta1 )
+    phi, gamma = E_step( docs, phi, gamma, alpha, beta )
     end = time.time( )
+
     print( "Optimized Method " + str( end-start) )
 
-    # assert( np.max( phi1 - phi2 ) <= 1e-9 )
-    assert( np.max( phi1 - phi3 ) <= 1e-9 )
+    start = time.time( )
+    alpha1, beta1 = M_step_tmp( docs, phi, gamma, alpha1, beta1, M )
+    end = time.time( )    
 
-    # The M-step
-    alpha1, beta1  =     M_step( docs, phi, gamma, alpha1, beta1, M )    
-    alpha2, beta2  = M_step_ref( docs, phi, gamma, alpha2, beta2, M )
+    print( "Optimized Method " + str( end-start) )
 
-    assert( np.max( beta1 - beta2 ) <= 1e-9 ) 
-    # print( "alpha match!" )/
+    start = time.time( )
+    alpha2, beta2 = M_step( docs, phi, gamma, alpha2, beta2, M )
+    end = time.time( )
+    print( "Brute Force Method " + str( end-start) )
 
+    assert( np.max( abs( beta2 - beta1 ) ) <= 1e-9 )
 
     # check anomaly
-    if np.any( np.isnan( alpha1 ) ):
+    if np.any( np.isnan( alpha ) ):
         print( "NaN detected: alpha" )
         break
     
     # check convergence
-    lb  = vlb( docs, phi, gamma, alpha1, beta1, M, N, k )
+    lb  = vlb( docs, phi, gamma, alpha, beta, M, N, k )
     err = abs( lb - lb_old )
     
     # check anomaly
