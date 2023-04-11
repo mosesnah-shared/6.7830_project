@@ -1,9 +1,7 @@
 # %% Import the necessary libraries
 import os
 import nltk
-import time
-import warnings
-
+import pickle
 import numpy             as np
 import matplotlib.pyplot as plt
 import seaborn 			 as sns
@@ -19,14 +17,15 @@ nltk.download( 'stopwords' )
 # The details are contained in:
 # [REF] https://www.nltk.org/book/ch02.html
 from nltk.corpus import reuters
-from nltk.corpus import stopwords
 
+# Careful that scipy.special functions have accuracy issues
+# [REF] https://stackoverflow.com/questions/21228076/the-precision-of-scipy-special-gammaln
 from scipy.special import psi, polygamma, gammaln
+import scipy.io
 
 # %% Define stopwords not included as a vocabularies
 
-stops = stopwords.words("english")
-stops += [
+stops = [
     "a", "about", "above", "across", "after", "afterwards", "again", "against",
     "all", "almost", "alone", "along", "already", "also", "although", "always",
     "am", "among", "amongst", "amoungst", "amount", "an", "and", "another",
@@ -36,7 +35,7 @@ stops += [
     "below", "beside", "besides", "between", "beyond", "bill", "both",
     "bottom", "but", "by", "call", "can", "cannot", "cant", "co", "con",
     "could", "couldnt", "cry", "de", "describe", "detail", "do", "done",
-    "down", "due", "during", "each", "eg", "eight", "either", "eleven", "else",
+    "down", "due", "did", "during", "each", "eg", "eight", "either", "eleven", "else",
     "elsewhere", "empty", "enough", "etc", "even", "ever", "every", "everyone",
     "everything", "everywhere", "except", "few", "fifteen", "fifty", "fill",
     "find", "fire", "first", "five", "for", "former", "formerly", "forty",
@@ -45,14 +44,14 @@ stops += [
     "hereby", "herein", "hereupon", "hers", "herself", "him", "himself", "his",
     "how", "however", "hundred", "i", "ie", "if", "in", "inc", "indeed",
     "interest", "into", "is", "it", "its", "itself", "keep", "last", "latter",
-    "latterly", "least", "less", "ltd", "made", "many", "may", "me",
+    "latterly", "least", "less", "ltd", "lt", "made", "many", "may", "me",
     "meanwhile", "might", "mill", "mine", "more", "moreover", "most", "mostly",
     "move", "much", "must", "my", "myself", "name", "namely", "neither",
     "never", "nevertheless", "next", "nine", "no", "nobody", "none", "noone",
     "nor", "not", "nothing", "now", "nowhere", "of", "off", "often", "on",
     "once", "one", "only", "onto", "or", "other", "others", "otherwise", "our",
     "ours", "ourselves", "out", "over", "own", "part", "per", "perhaps",
-    "please", "put", "rather", "re", "same", "see", "seem", "seemed",
+    "please", "put", "rather", "re", "said", "same", "see", "seem", "seemed",
     "seeming", "seems", "serious", "several", "she", "should", "show", "side",
     "since", "sincere", "six", "sixty", "so", "some", "somehow", "someone",
     "something", "sometime", "sometimes", "somewhere", "still", "such",
@@ -63,173 +62,92 @@ stops += [
     "thru", "thus", "to", "together", "too", "top", "toward", "towards",
     "twelve", "twenty", "two", "un", "under", "until", "up", "upon", "us",
     "very", "via", "was", "we", "well", "were", "what", "whatever", "when",
-    "whence", "whenever", "where", "whereafter", "whereas", "whereby",
+    "whence", "whenever", "where", "whereafter", "whereas", "whereby", 
+    '"(', '"...', ')"', '),"', ')-&', ').', ')...', ')>', ')>,', ',"', ',,', '--', '."', ".'", '.)', '?"', 
+    '...', './', '.>', '0p', '11p', '14th', '17p', '1970s', '1990s', '1st', '20th', '242p', '25p', '25th', '2nd', '2p', 
+    '317p', '3rd', '3x', '459p', '479p', '480p', '4th', '646p', '670p', '696p', '7p', '813p', '830p', '9p', ">'", '>.', '?"'
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q",
+    "r", "s", "t", "u", "v", "w", "x", "y", "z", "inc", 
     "wherein", "whereupon", "wherever", "whether", "which", "while", "whither",
     "who", "whoever", "whole", "whom", "whose", "why", "will", "with",
     "within", "without", "would", "yet", "you", "your", "yours", "yourself",
-    "yourselves", ".", "!", "?", ",", ";", ":", "[", "]", "{", "}", "-", "+", 
-    "_", "/", "@", "#", "$", "%", "^", "&", "*", "(", ")", "<", ">", "|", "=",
-    ".-", ".,", "'", '"', ',"'
+    "yourselves", "),", ">,", "):" , ".", "!", "?", ",", ";", ":", "[", "]", "{", "}", "-", "+", 
+    "_", "/", "@", "#", "$", "%", "^", "&", "*", "(", ")", "<", ">", "|", "=", ')...', '"...', ".'", '.)',
+    ".-", ".,", "'", '"', ',",'
 ]
 
 # %% Read the training set and test set
 
-# Distinguish the training/test set of the Reuter's data set
-trainset, testset = [ ], [ ]
 
-# The vocabulary list, produced from the training set 
-vocab = [ ]
+def create_vocab( n = 500 ):
 
-# Hyperparameter: the number of training set of the document
-ntrain = 2000
+    # Distinguish the id_set, training/test set of the Reuter's data set
+    id_set, trainset = [ ], [ ]
 
-# Counter
-i = 0
+    # The vocabulary list, produced from the training set 
+    vocab = [ ]
 
-for file_id in reuters.fileids( ):
+    # Counter
+    i = 0
 
-    if file_id.startswith( "train" ):
+    # Read only the training set of the data
+    for file_id in reuters.fileids( ):
 
-        # Save the words, except the (1) stopwords (2) numbers
-        doc = [ w.lower( ) for w in reuters.words( file_id ) if ( w.isupper( ) ) and ( w.lower( ) not in stops ) and ( not w.isnumeric( ) ) ]
+        if file_id.startswith( "train" ):
 
-        # Save the values
-        if doc:
-            trainset.append( doc )
-            vocab += doc
-            i += 1
+            # Save the words, except the (1) stopwords (2) numbers
+            doc = [ w.lower( ) for w in reuters.words( file_id ) if ( w.lower( ) not in stops ) and ( not w.isnumeric( ) ) ]
 
-    else:
-        testset.append( [ w.lower( ) for w in reuters.words( file_id ) if ( w.isupper( ) ) and ( w.lower( ) not in stops ) and ( not w.isnumeric( ) ) ] )
+            # Save the values
+            if doc:
+                trainset.append( doc )
+                id_set.append( file_id )
+                vocab += doc
+                i += 1
 
-    if i >= ntrain:
-        break
+        if i >= n:
+            break
 
-# Within the vocabulary list, get only the unique vocabularies.
-vocab = list( set( vocab ) )
 
-# The number of vocabularies in the dictionary
-# As with the LDA paper, we use "V" for the number of "words" (vocabs)
-V = len( vocab )
+    # Within the vocabulary list, get only the unique vocabularies.
+    vocab = list( set( vocab ) )
+    vocab.sort( )
+    
+    return vocab, trainset, id_set
 
-# Produce a dictionary, with key-value pair as word-index (word_idx) pair.
-word_idx = { w : i for i, w in enumerate( vocab ) }
-
-# Change the trainset/testset documents from a list of words to a list of index
-data = dict( )
-data[ "train" ] = [ np.array( [ word_idx.get( w, V ) for w in doc ] ) for doc in trainset ] 
-data[ "test"  ] = [ np.array( [ word_idx.get( w, V ) for w in doc ] ) for doc in  testset ] 
-
-# To train the LDA algorithm we use the "train" set
-docs = data[ "train" ]
-
-# The numpy array of the length of each document
-N = np.array( [ len( doc ) for doc in docs ] )
-
-# The number of documents for the train set. 
-# Note that this should be identical to ntrain
-M = len( N )
-
-# number of topics
-k = 10  
-
-# %% Initialize the alpha, beta, phi, gamma
-# Alpha is the size of the topic, k
-# Note that np.random.rand( k ) can also be used.
-alpha = np.random.gamma( shape = 100, scale = 0.01, size = k ) 
-
-# Beta is the size of k x V
-# For each topic, it is a dirichlet distribution over verbs
-# The summation should be one, since it is a probability distribution.
-beta  = np.random.dirichlet( np.ones( V ), k )
-
-# initialize ϕ, γ
-# Step (1) of Figure 6
-# Equation 6 (16)
-# phi (The multipomial) is the size of M x max( N ) x k
-# The summation should be one.
-phi = np.ones( ( M, max( N ), k ) ) / k
-
-# Zero values for other cases
-for m, N_d in enumerate( N ):
-    phi[ m, N_d:, : ] = 0 
-
-# Step (2) of Figure 6
-# Equation 7 (17)
-# Gamma (The Dirichlet Parameters) is the size of M x k
-# N.reshape change N as a coulumn vector
-gamma = alpha + np.ones( ( M,  k ) ) * N.reshape( -1, 1 ) / k
 
 # %% Define the E-step of the EM algorithm
-
-# Code from 
+# Code modified from 
 # https://github.com/naturale0/NLP-Do-It-Yourself/blob/main/NLP_with_PyTorch/3_document-embedding/3-1.%20latent%20dirichlet%20allocation.ipynb
-def E_step_ref(docs, phi, gamma, alpha, beta):
-    """
-    Minorize the joint likelihood function via variational inference.
-    This is the E-step of variational EM algorithm for LDA.
-    """
-    # optimize phi
-    for m in range(M):
-        phi[ m, :N[ m ], :] = ( beta[ :, docs[ m ] ] * np.exp( psi( gamma[ m, : ] ) - psi( gamma[ m, : ].sum( ) ) ).reshape( -1, 1 ) ).T
-
-        # Normalize phi
-        phi[ m, :N[ m ] ] /= phi[ m, :N[ m ]].sum( axis = 1 ).reshape( -1, 1 )
-        if np.any(np.isnan(phi)):
-            raise ValueError("phi nan")
-
-    # optimize gamma
-    gamma = alpha + phi.sum( axis = 1 )
-
-    return phi, gamma
-
-
-def E_step_brute_force( docs, phi, gamma, alpha, beta ):
-
-    # Optimize phi
-    # The number of topics:    
-    for m in range( M ):
-
-        # "phi" is a 2D array
-        # Iterating over the words of the m-th document
-        for n in range( N[ m ] ):
-
-            # Iterating over the topics
-            for i in range( k ):
-                phi[ m, n, i ] = beta[ i, docs[ m ][ n ] ] * np.exp( psi( gamma[ m, i ] ) - psi( gamma[ m, : ].sum( ) ) )
-
-            # Once the calculation is complete, normalize over the 3rd axis
-            phi[ m, n, : ] /= phi[ m, n, : ].sum( )
-
-    if np.any( np.isnan( phi ) ):
-        raise ValueError( "phi nan" )
-
-    # Optimize gamma
-    # Equation 17, sum over the document
-    for m in range( M ):
-        for i in range( k ):
-            gamma[ m, i ] = alpha[ i ] + phi[ m, :, i ].sum( )
-
-    # ========================================================
-
-    return phi, gamma
-
 def E_step( docs, phi, gamma, alpha, beta ):
+    """
+        Parameters
+        ----------
+            docs: the M documents 
+                  The words of each document are indexed via the vocab. set.
 
-    # Phi is a M x max( N ) x k array
-    # Beta is a k x V array
-    # Gamma is a M x k array
-    # But to simplify the calculation, 
+            phi:  M x max( N ) x k array
+                Summation along k topics (i.e., axis = 2) must be 1
+
+            Gamma: M x k array
+
+            alpha: k-length array            
+
+            beta: k x V array
+                Summation along k topics (i.e., axis = 9) must be 1
+                
+    """
 
     # Create a 3D beta array, to a size of M x max( N ) x k
+    # This is for simplifying the calculation of phi_{dni}
     beta3D = np.zeros( ( M, max( N ), k ) )
 
+    # Iterating over the documents
     for d in range( M ):
         beta3D[ d, :N[ d ], : ] = np.copy( beta[ :, docs[ d ] ].T )
 
     # Create Gamma, also to a size of M x max( N ) x k
-    # First, calculate the 2D array 
-    # [TODO] [Moses C. Nah] [2023.04.04] keepdims=
+    # "keepdims" save the dimension of the multi-dimensional array after summation.
     # https://stackoverflow.com/questions/41752442/dividing-3d-array-by-2d-row-sums
     tmp = np.exp( psi( gamma ) - psi( gamma.sum( axis = 1, keepdims=True ) ) )
 
@@ -237,21 +155,16 @@ def E_step( docs, phi, gamma, alpha, beta ):
     gamma3D = np.stack( [ tmp for _ in range( max( N ) ) ], axis = 1 )
 
     # Update phi, based on the equation
+    # Point-wise multiplication, which is way faster than others.
     phi = beta3D * gamma3D
 
-    # [TODO] [Moses C. Nah] [2023.04.04] keepdims=
-    # https://stackoverflow.com/questions/41752442/dividing-3d-array-by-2d-row-sums
+    # Normalization of the phi
+    # [REF] https://stackoverflow.com/questions/41752442/dividing-3d-array-by-2d-row-sums
     # [REF] https://stackoverflow.com/questions/26248654/how-to-return-0-with-divide-by-zero
     phi_sum = phi.sum( axis = 2, keepdims = True )
     phi = np.divide( phi, phi_sum, out = np.zeros_like( phi ), where=( phi_sum!=0 ) )
     
     # Update Gamma
-    # Gamma is a M x k matrix
-    # Alpha is a k array 
-    # Phi is a M x max( N ) x k array
-
-    # Replicate the alpha as a M x k array
-    # Summation over axis = 1
     gamma = np.tile( alpha, ( M, 1 ) ) + phi.sum( axis = 1 )
 
     return phi, gamma
@@ -259,320 +172,303 @@ def E_step( docs, phi, gamma, alpha, beta ):
 
 # %% Define the M-step of the EM algorithm
 
+def M_step( docs, phi, gamma, alpha, beta, M ):
 
-def M_step_tmp( docs, phi, gamma, alpha, beta, M ):
-    # update alpha
-    alpha = update(alpha, gamma, M)
+    # ======================================== #
+    # ============= Update alpha ============= #
+    # ======================================== #
+    # Using Gradient Ascent
+
+    # Define the maximum iteration and the tolerance to check convergence
+    max_iter = int( 1e3 )
+    tol      = 1e-6
+
+    # Conduct iterations
+    for _ in range( max_iter ):
+        
+        # Store old alpha value
+        alpha_old = alpha.copy( )
+        
+        # g: gradient 
+        g = M * ( psi( alpha.sum( ) ) - psi( alpha ) ) + ( psi( gamma ) - psi( gamma.sum( axis = 1, keepdims = True ) ) ).sum( axis = 0 )
+
+        # z: Hessian constant component
+        # NOT THE TOPIC z!!
+        z =  M * polygamma( 1, alpha.sum( ) )  
+
+        # h: Hessian diagonal component
+        h = -M * polygamma( 1, alpha )     
+
+        # The c value for the gradient update
+        c = ( g / h ).sum( ) / ( 1./z + ( 1./h ).sum( ) )
+
+        # update the alpha via gradient descent
+        alpha -= (g - c) / h
+        
+        # check the error between old and new alphas
+        err = np.sqrt( np.mean( ( alpha - alpha_old ) ** 2 ) )
+
+        # Check the tolerance of the error
+        if err < tol:
+            break
     
+    # ======================================== #
+    # ============= Update beta ============== #
+    # ======================================== #
+
     # update beta
-    # phi is simply M x max( N ) x k
-    # w_dn^{j} is   M x max( N ) x V
+    # phi      shape is M x max( N ) x k
+    # w_dn^{j} shape is M x max( N ) x V
 
-    # First, create w_nd{ j } array
-    # We 
-    tmp = np.arange( V )
-    ts = time.time( )
-    tmp2 = np.transpose( np.tile( tmp[:, np.newaxis, np.newaxis], (1, M, max( N ) ) ), ( 1,2, 0 ) )
-    tf = time.time( )
+    # First, create w_nd{ j } array, and we use the following trick
+    # Construct a M x max( N ) x V matrix, where the [:, :, i] element is filled with i
 
-    print( "1 ", str( tf - ts ) ) 
+    # Construct 0,1,2...,V
+    tmp  = np.arange( V )
 
+    # Expand this to 3D array
+    tmp2 = np.transpose( np.tile( tmp[ :, np.newaxis, np.newaxis], ( 1, M, max( N ) ) ), ( 1,2, 0 ) )
+    
     # Create the matrix for masking
+    # Copy the documents along the document axis
     tmp3 = np.zeros( ( M, max( N ), V ), dtype = int )
-
-    ts = time.time( )
-
     for m in range( M ):
         tmp3[ m, :N[ m ], : ] =  np.tile( docs[ m ], ( V, 1 ) ).T
 
-    tf = time.time( )
-    print( "2 ", str( tf - ts ) ) 
-
-    ts = time.time( )
+    # Define the mask
     mask = ( tmp2 == tmp3 )
-    tf = time.time( )
-    print( "2.5 ", str( tf- ts ) )
-
-    ts = time.time( )
-    ttmp = tmp2 - tmp3
-    
-    tttmp = np.zeros_like( phi )
-
-    for i in range( phi.shape[ 0 ] ):
-        for j in range( phi.shape[ 1 ] ):
-            for k in range( phi.shape[ 2 ] ):
-                tttmp[ i,j, k ] = ( ttmp[ i,j,k] is 0 )
-
-    tf = time.time( )
-    print( "2.8 ", str( tf- ts ) )    
+ 
     # Eventually, mask is a M x max( N ) x V matrix
     # Multiply mask with phi which is a M x max( N ) x k matrix
-    # Reshape
-    ts = time.time( )
-    tmp_phi  = phi.transpose( 2, 0, 1 ).reshape( k, -1 )
+    # Reshape is required to conduct matrix multiplication
+
+    # Change the size of phi  from M x max( N ) x k to k x M x max( N )
+    # Change the size of mask from M x max( N ) x V to V x M x max( N )
+    tmp_phi  =  phi.transpose( 2, 0, 1 ).reshape( k, -1 )
     tmp_mask = mask.transpose( 2, 0, 1 ).reshape( V, -1 ).T
-    tf = time.time( )
 
-    print( "3 ", str( tf - ts ) ) 
-
-    ts = time.time( )
     beta = tmp_phi @ tmp_mask
-    tf = time.time( )
 
-    print( "4 ", str( tf - ts ) ) 
-    
-    ts = time.time( )
-    beta /= beta.sum( axis = 1).reshape(-1, 1) 
-    tf = time.time( )
-
-    print( "5 ", str( tf - ts ) ) 
+    # Normalization after matrix multiplication to make sum of a given column to 1
+    beta_sum = beta.sum( axis = 1, keepdims = True )
+    beta = np.divide( beta, beta_sum, out = np.zeros_like( beta ), where=( beta_sum!=0 ) )    
 
     return alpha, beta
 
-def M_step( docs, phi, gamma, alpha, beta, M ):
-    # update alpha
-    start = time.time( )
-    alpha = update(alpha, gamma, M)
-    
-    end = time.time( )
-    print( "INSIDE1 ", str( end - start ) )
-
-    # update beta
-    start = time.time( )
-
-    for j in range(V):
-        beta[:, j] = np.array([phi_dot_w(docs, phi, m, j) for m in range(M)]).sum(axis=0)
-
-    beta /= beta.sum(axis=1).reshape(-1, 1) 
-
-    end = time.time( )
-    print( "INSIDE2 ", str( end - start ) )
-
-    return alpha, beta
-
-def phi_dot_w(docs, phi, d, j):
-    """
-    \sum_{n=1}^{N_d} ϕ_{dni} w_{dn}^j
-    """
-    # doc = np.zeros(docs[m].shape[0] * V, dtype=int)
-    # doc[np.arange(0, docs[m].shape[0] * V, V) + docs[m]] = 1
-    # doc = doc.reshape(-1, V)
-    # lam += phi[m, :N[m], :].T @ doc
-    return (docs[d] == j) @ phi[ d, :N[d], :]
-
-def update(var, vi_var, const, max_iter=10000, tol=1e-6):
-    """
-    From appendix A.2 of Blei et al., 2003.
-    For hessian with shape `H = diag(h) + 1z1'`
-    
-    To update alpha, input var=alpha and vi_var=gamma, const=M.
-    To update eta, input var=eta and vi_var=lambda, const=k.
-    """
-    for _ in range(max_iter):
-        # store old value
-        var0 = var.copy()
-        
-        # g: gradient 
-        psi_sum = psi(vi_var.sum(axis=1)).reshape(-1, 1)
-        g = const * (psi(var.sum()) - psi(var)) \
-            + (psi(vi_var) - psi_sum).sum(axis=0)
-
-        # H = diag(h) + 1z1'
-        z = const * polygamma(1, var.sum())  # z: Hessian constant component
-        h = -const * polygamma(1, var)       # h: Hessian diagonal component
-        c = (g / h).sum() / (1./z + (1./h).sum())
-
-        # update var
-        var -= (g - c) / h
-        
-        # check convergence
-        err = np.sqrt(np.mean((var - var0) ** 2))
-        crit = err < tol
-        if crit:
-            break
-    else:
-        warnings.warn(f"max_iter={max_iter} reached: values might not be optimal.")
-    
-    #print(err)
-    return var
 
 # %% Other Functions
-def dg( gamma, d, i ):
-    """
-        E[log θ_t] where θ_t ~ Dir(gamma)
-    """
-    # Equation in Section A.1.
-    return psi( gamma[ d,  i ] ) - psi( np.sum( gamma[ d, : ] ) )
 
-
-def dl(lam, i, w_n):
-    """
-        E[log β_t] where β_t ~ Dir( lam )
-    """
-    return psi( lam[ i, w_n ] ) - psi( np.sum( lam[ i, : ] ) )
-
-def vlb(docs, phi, gamma, alpha, beta, M, N, k):
-    """
-    Average variational lower bound for joint log likelihood.
-    """
-    lb = 0
+# The variational lower bound
+def vlb( docs, phi, gamma, alpha, beta, M, N, k ):
+    
+    # The L function (Equation 15)
+    L_func = 0
 
     # Over the document
     # Equation 15
     for d in range( M ):
-        lb += (
-            gammaln( np.sum( alpha ) ) - np.sum( gammaln( alpha ) ) + np.sum( [ ( alpha[ i ] - 1) * dg(gamma, d, i) for i in range(k)])
-        )
 
-        lb -= (
-            gammaln(np.sum(gamma[d, :]))
-            - np.sum(gammaln(gamma[d, :]))
-            + np.sum([(gamma[d, i] - 1) * dg(gamma, d, i) for i in range(k)])
-        )
+        # Summation of the first line, shown in the L equation of Deepnote
+        L_func += gammaln( np.sum( alpha ) ) - np.sum( gammaln( alpha ) ) \
+                  + np.sum( [ ( alpha[ i ]    - 1 ) * ( psi( gamma[ d,  i ] ) - psi( np.sum( gamma[ d, : ] ) ) ) for i in range( k ) ] )
 
+        # Summation of the final line, shown in the L equation of Deepnote 
+        L_func += -gammaln( np.sum( gamma[ d, : ] ) ) + np.sum( gammaln( gamma[ d, : ] ) ) \
+                  - np.sum( [ ( gamma[ d, i ] - 1 ) * ( psi( gamma[ d,  i ] ) - psi( np.sum( gamma[ d, : ] ) ) ) for i in range( k ) ] ) 
+
+        # Summation of the second line, shown in the L equation of Deepnote 
         for n in range( N[ d ] ):
+
             w_n = int( docs[ d ][ n ] )
 
-            lb += np.sum( [phi[d][n, i] * dg(gamma, d, i) for i in range(k)])
-            lb += np.sum( [phi[d][n, i] * np.log(beta[i, w_n]) for i in range(k)])
-            lb -= np.sum( [phi[d][n, i] * np.log(phi[d][n, i]) for i in range(k)])
+            L_func +=  np.sum( [ phi[ d ,n, i ] * ( psi( gamma[ d,  i ] ) - psi( np.sum( gamma[ d, : ] ) ) ) if phi[ d ,n, i ] != 0 else 0 for i in range( k )  ] )
+            L_func +=  np.sum( [ phi[ d ,n, i ] * np.log( beta[ i, w_n ] )                                   if beta[ i, w_n ] != 0 else 0 for i in range( k )  ] )
+            L_func += -np.sum( [ phi[ d ,n, i ] * np.log( phi[ d, n, i ] )                                   if phi[ d, n, i ] != 0 else 0 for i in range( k )  ] )
 
-    return lb / M
+    # Taking the average of the documents
+    return L_func / M
 
-# %% [markdown]
-# #### Training
 
-# %% [markdown]
-# * Only on 2,000 documents
+# %% The Main Loop
 
-# %%
+def n_most_important( ttmp, vocab, n = 30 ):
 
-# for plots later, reorder training set
-# (don't need to do this)
+    # Get beta with top 9 values
+    max_values = ttmp.argsort( )[ -n : ][ ::-1 ]
+    return np.array( vocab )[ max_values ]
 
-# if "lda_trainset.idx" in os.listdir():
-#     with open("lda_trainset.idx") as r:
-#         idx = eval(r.read())
+if __name__ == "__main__":
 
-#     docs = np.array( data[ "train" ] )[ idx ].tolist( )
-# else:
+    # The number of vocabularies in the dictionary
+    # As with the LDA paper, we use "V" for the number of "words" (vocabs)
+
+    ntrain = 700
+
+    tmp_name = "vocab" + str( ntrain ) + ".pkl"
+
+    if not os.path.exists( tmp_name ):
+        vocab, docs_word, id_set = create_vocab( ntrain )
+
+        # Save zip
+        vocab_zip = [ vocab, docs_word, id_set ]
+
+        with open( tmp_name, "wb" ) as f:
+            pickle.dump( vocab_zip, f, protocol = pickle.HIGHEST_PROTOCOL )
+
+        print( tmp_name + " saved" )    
+
+    else:
+        f = open( tmp_name , 'rb')
+        vocab, docs_word, id_set = pickle.load( f )
+        print( "loaded " + tmp_name )    
+
+    V = len( vocab )
+
+    # Produce a dictionary, with key-value pair as word-index (word_idx) pair.
+    word_idx = { w : i for i, w in enumerate( vocab ) }
+    idx_word = { i : w for i, w in enumerate( vocab ) }
+
+    # Change the trainset/testset documents from a list of words to a list of index
+    docs = [ np.array( [ word_idx.get( w, V ) for w in doc ] ) for doc in docs_word ] 
     
+    # The numpy array of the length of each document
+    N = np.array( [ len( doc ) for doc in docs ] )
 
-# %%
+    # The number of documents for the train set. 
+    # Note that this should be identical to ntrain
+    M = len( N )
 
-N_EPOCH = 1000
-TOL = 0.1
+    # number of topics
+    k = 3
 
-verbose = True
-lb = -np.inf
+    # %% Initialize the alpha, beta, phi, gamma
+    # Alpha is the size of the topic, k
+    # Note that np.random.rand( k ) can also be used.
+    alpha = np.random.gamma( shape = 100, scale = 0.01, size = k ) 
 
-alpha1 = np.copy( alpha )
-alpha2 = np.copy( alpha )
+    # Beta is the size of k x V
+    # For each topic, it is a dirichlet distribution over verbs
+    # The summation should be one, since it is a probability distribution.
+    beta  = np.random.dirichlet( np.ones( V ), k )
 
-beta1 = np.copy( beta )
-beta2 = np.copy( beta )
+    # initialize ϕ, γ
+    # Step (1) of Figure 6
+    # Equation 6 (16)
+    # phi (The multipomial) is the size of M x max( N ) x k
+    # The summation should be one.
+    phi = np.ones( ( M, max( N ), k ) ) / k
 
-for epoch in range( N_EPOCH ): 
+    # Zero values for other cases
+    for m, N_d in enumerate( N ):
+        phi[ m, N_d:, : ] = 0 
 
-    # store old value
-    lb_old = lb
+    # Step (2) of Figure 6
+    # Equation 7 (17)
+    # Gamma (The Dirichlet Parameters) is the size of M x k
+    # N.reshape change N as a coulumn vector
+    gamma = alpha + np.ones( ( M,  k ) ) * N.reshape( -1, 1 ) / k
 
-    # # The E-step
-    # start = time.time( )
-    # phi1, gamma1 =  E_step_brute_force( docs, phi1, gamma1, alpha, beta )
-    # end = time.time( )
-    # print( "Brute Force Method: " + str( end-start) )
+    is_train = False
+    is_plot  = False
+    is_single_doc = True
 
-    # start = time.time( )
-    # phi2, gamma2 = E_step_ref( docs, phi2, gamma2, alpha, beta )
-    # end = time.time( )
-    # print( "Reference Method: " + str( end-start) )
+    if is_train: 
 
-    start = time.time( )
-    phi, gamma = E_step( docs, phi, gamma, alpha, beta )
-    end = time.time( )
+        niter = 1000
 
-    print( "Optimized Method " + str( end-start) )
+        # The tolerance to check the L convergence
+        tol = 0.01
+        L   = -np.inf
 
-    start = time.time( )
-    alpha1, beta1 = M_step_tmp( docs, phi, gamma, alpha1, beta1, M )
-    end = time.time( )    
+        # The list of lb 
+        lb_arr = [ ]
 
-    print( "Optimized Method " + str( end-start) )
+        for i in range( niter ): 
 
-    start = time.time( )
-    alpha2, beta2 = M_step( docs, phi, gamma, alpha2, beta2, M )
-    end = time.time( )
-    print( "Brute Force Method " + str( end-start) )
+            # store old value
+            L_old = L
 
-    assert( np.max( abs( beta2 - beta1 ) ) <= 1e-9 )
+            # Conduct the EM Algorithm
+            phi  , gamma = E_step( docs, phi, gamma, alpha, beta    )
+            alpha, beta  = M_step( docs, phi, gamma, alpha, beta, M )
+            
+            # check convergence
+            L  = vlb( docs, phi, gamma, alpha, beta, M, N, k )
+            err = abs( L - L_old )
+            
+            print( f"Trial:{i: 04}: Variational Lower Bound:{L: .3f}, Delta:{err: .3f}" )
+            
+            if err < tol:
+                break
 
-    # check anomaly
-    if np.any( np.isnan( alpha ) ):
-        print( "NaN detected: alpha" )
-        break
-    
-    # check convergence
-    lb  = vlb( docs, phi, gamma, alpha, beta, M, N, k )
-    err = abs( lb - lb_old )
-    
-    # check anomaly
-    if np.isnan( lb ):
-        print("NaN detected: lb")
-        break
+            lb_arr.append( L )
+
+        print( "Training Complete" )
         
-    if verbose:
-        print(f"{epoch: 04}:  : {lb: .3f},  error: {err: .3f}")
-    
-    # if err < TOL:
-    #     break
+        # Once the training is complete, save the alpha, beta, gamma, phi, and other variables 
+        scipy.io.savemat( "trained_v" + str( ntrain ) + "_LDA.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
 
-else:
-    warnings.warn(f"max_iter reached: values might not be optimal.")
 
-print(" ========== TRAINING FINISHED ==========")
+    else: 
+        # Load the data file
+        # Code should be set before hand
+        file_name = "trained_v700_LDA.mat"
+        data = scipy.io.loadmat( file_name )
+        print( "data loaded" )
 
-# %% [markdown]
-# * Training result
+    if is_single_doc:
 
-# %% [markdown]
-# 1. Topic extraction
+        # Print out the topic of the d-th document
+        for i in range( k ):
+            tmp  = data[ "beta" ][ i, : ]
+            print( f"TOPIC {i+1:02}: { n_most_important( tmp, vocab, 20 ) }")
 
-# %%
-def n_most_important(beta_i, n=30):
-    """
-    find the index of the largest `n` values in a list
-    """
-    
-    max_values = beta_i.argsort()[-n:][::-1]
-    return np.array(vocab)[max_values]
+        # Choose one document for the print out
+        d = 1
+        print( ' '.join( reuters.words( id_set[ d ] )  ) )
+        print( ' '.join( [ idx_word.get( docs[ d ][ i ] ) for i in range( N[ d ] ) ] ) )
 
-# %%
-for i in range(k):
-    print(f"TOPIC {i:02}: {n_most_important(beta[i], 9)}")
+        # Get the topic from this document.
+        # Get the phi matrix of the d-th document, which is max( N ) x k
+        tmp_phi = phi[ d, :, :]
 
-# %% [markdown]
-# 2. Topic-word & document-document distribution
 
-# %%
-n_sample = 10000
-theta_hat = np.array([np.random.dirichlet(gamma[d], n_sample).mean(0) for d in range(M)])
-theta_hat /= theta_hat.sum(1).reshape(-1, 1)
+        # beta is a k x V matrix
+        # Given beta, we can find the topics from the word 
+        # Get the best within V words        
 
-# %%
-plt.figure(figsize=(8,8))
-plt.subplot(121)
-n_plot_words = 150
-sns.heatmap(beta.T[:n_plot_words], xticklabels=[], yticklabels=[])
-plt.xlabel("Topics", fontsize=14)
-plt.ylabel(f"Words[:{n_plot_words}]", fontsize=14)
-plt.title("topic-word distribution", fontsize=16)
 
-plt.subplot(122)
-sns.heatmap(theta_hat, xticklabels=[], yticklabels=[])
-plt.xlabel("Topics", fontsize=14)
-plt.ylabel("Documents", fontsize=14)
-plt.title("document-topic distribution", fontsize=16)
+    # Plotting the images
+    if is_plot:
 
-plt.tight_layout();
-# %%
+        # First Figure, plot the beta array, which is k x V
+        
+        plt.figure( figsize = (8,8) )
+        plt.subplot( 121 )
+
+        # This returns a n_plot_words x k matrix
+        sns.heatmap( data[ "beta" ].T, xticklabels = [ ], yticklabels = [ ] )
+        plt.xlabel("Topics", fontsize = 14 )
+        plt.ylabel( "Words", fontsize = 14 )
+        plt.title("topic-word distribution", fontsize = 16 )
+
+        # Second Figure, plot the topic from gamma
+        # Gamma is a M x k matrix
+        # Given the document, it is a k-length array, which approximates 
+        n_sample = 10000
+
+        # Results in n_sample x k matrix, summed over axis 0, which results in a k matrix
+        theta_hat = np.array( [ np.random.dirichlet( data[ "gamma" ][ d ], n_sample ).mean( axis = 0 ) for d in range( M ) ] )
+
+        print( data[ "gamma" ].shape  )
+
+        # Normalize over topic
+        theta_hat /= theta_hat.sum( axis = 1, keepdims = True )
+
+        plt.subplot(122)
+        sns.heatmap( theta_hat, xticklabels=[ ], yticklabels = [ ] )
+        plt.xlabel( "Topics"    , fontsize = 14)
+        plt.ylabel( "Documents" , fontsize = 14 )
+        plt.title( "document-topic distribution", fontsize = 16)
+        plt.tight_layout()
+        plt.show( )
