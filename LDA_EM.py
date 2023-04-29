@@ -2,6 +2,7 @@
 import os
 import nltk
 import pickle
+import argparse
 import numpy             as np
 import matplotlib.pyplot as plt
 import seaborn 			 as sns
@@ -10,8 +11,7 @@ import seaborn 			 as sns
 np.random.seed( 0 )
 
 # Download the nltk corpus
-nltk.download( 'reuters'   )
-nltk.download( 'stopwords' )
+nltk.download( 'reuters'  )
 
 # "After" download, import the reuters and stopwords
 # The details are contained in:
@@ -22,6 +22,7 @@ from nltk.corpus import reuters
 # [REF] https://stackoverflow.com/questions/21228076/the-precision-of-scipy-special-gammaln
 from scipy.special import psi, polygamma, gammaln
 import scipy.io
+
 
 # %% Define stopwords not included as a vocabularies
 
@@ -77,8 +78,6 @@ stops = [
 ]
 
 # %% Read the training set and test set
-
-
 def create_vocab( n = 500 ):
 
     # Distinguish the id_set, training/test set of the Reuter's data set
@@ -171,7 +170,6 @@ def E_step( docs, phi, gamma, alpha, beta ):
 
 
 # %% Define the M-step of the EM algorithm
-
 def M_step( docs, phi, gamma, alpha, beta, M ):
 
     # ======================================== #
@@ -299,13 +297,27 @@ def n_most_important( ttmp, vocab, n = 30 ):
 
 if __name__ == "__main__":
 
+    # Get argument parser to automize the script
+    parser = argparse.ArgumentParser( )
+    parser.add_argument( '--run_train' , action='store_true'       )   # To train the LDA model
+    parser.add_argument( '--plot'      , action='store_true'       )   # To train the LDA model
+    parser.add_argument( '--n_train'   , type = int, default = 700 )   # The number of reuters' documents used for the training
+    parser.add_argument( '--n_topics'  , type = int, default = 3   )   # The number of topics
+
+    args = parser.parse_args( )
+
     # The number of vocabularies in the dictionary
     # As with the LDA paper, we use "V" for the number of "words" (vocabs)
+    ntrain   = args.n_train
+    is_train = args.run_train
+    is_plot  = args.plot
+    k        = args.n_topics
 
-    ntrain = 700
 
-    tmp_name = "vocab" + str( ntrain ) + ".pkl"
+    # There are already parsed vocabs from n_train articles
+    tmp_name = "vocabs/vocab" + str( ntrain ) + ".pkl"
 
+    # If the pickle file doesn't exists
     if not os.path.exists( tmp_name ):
         vocab, docs_word, id_set = create_vocab( ntrain )
 
@@ -315,8 +327,12 @@ if __name__ == "__main__":
         with open( tmp_name, "wb" ) as f:
             pickle.dump( vocab_zip, f, protocol = pickle.HIGHEST_PROTOCOL )
 
-        print( tmp_name + " saved" )    
+        print( tmp_name + " saved" )   
 
+        # And regardless of the argument input, if pickle file doesn't exist you need to train the robot
+        args.run_train = True
+
+    # If the pickle file exists
     else:
         f = open( tmp_name , 'rb')
         vocab, docs_word, id_set = pickle.load( f )
@@ -338,10 +354,6 @@ if __name__ == "__main__":
     # Note that this should be identical to ntrain
     M = len( N )
 
-    # number of topics
-    k = 3
-
-    # %% Initialize the alpha, beta, phi, gamma
     # Alpha is the size of the topic, k
     # Note that np.random.rand( k ) can also be used.
     alpha = np.random.gamma( shape = 100, scale = 0.01, size = k ) 
@@ -351,7 +363,7 @@ if __name__ == "__main__":
     # The summation should be one, since it is a probability distribution.
     beta  = np.random.dirichlet( np.ones( V ), k )
 
-    # initialize ϕ, γ
+    # initialize phi and gamma matrices
     # Step (1) of Figure 6
     # Equation 6 (16)
     # phi (The multipomial) is the size of M x max( N ) x k
@@ -367,10 +379,6 @@ if __name__ == "__main__":
     # Gamma (The Dirichlet Parameters) is the size of M x k
     # N.reshape change N as a coulumn vector
     gamma = alpha + np.ones( ( M,  k ) ) * N.reshape( -1, 1 ) / k
-
-    is_train = False
-    is_plot  = False
-    is_single_doc = True
 
     if is_train: 
 
@@ -406,17 +414,16 @@ if __name__ == "__main__":
         print( "Training Complete" )
         
         # Once the training is complete, save the alpha, beta, gamma, phi, and other variables 
-        scipy.io.savemat( "trained_v" + str( ntrain ) + "_LDA.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
+        scipy.io.savemat( "trained/trained_v" + str( ntrain ) + "_LDA_EM.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
 
-
+    # If no training, then load the trained data and plot the data
     else: 
+
         # Load the data file
         # Code should be set before hand
-        file_name = "trained_v700_LDA.mat"
+        file_name = "trained/trained_v" + str( ntrain ) + "_LDA_EM.mat"
         data = scipy.io.loadmat( file_name )
         print( "data loaded" )
-
-    if is_single_doc:
 
         # Print out the topic of the d-th document
         for i in range( k ):
@@ -432,43 +439,39 @@ if __name__ == "__main__":
         # Get the phi matrix of the d-th document, which is max( N ) x k
         tmp_phi = phi[ d, :, :]
 
-
         # beta is a k x V matrix
         # Given beta, we can find the topics from the word 
         # Get the best within V words        
+        # Plotting the images
+        if is_plot:
 
+            # First Figure, plot the beta array, which is k x V
+            plt.figure( figsize = (8,8) )
+            plt.subplot( 121 )
 
-    # Plotting the images
-    if is_plot:
+            # This returns a n_plot_words x k matrix
+            sns.heatmap( data[ "beta" ].T, xticklabels = [ ], yticklabels = [ ] )
+            plt.xlabel("Topics", fontsize = 14 )
+            plt.ylabel( "Words", fontsize = 14 )
+            plt.title("topic-word distribution", fontsize = 16 )
 
-        # First Figure, plot the beta array, which is k x V
-        
-        plt.figure( figsize = (8,8) )
-        plt.subplot( 121 )
+            # Second Figure, plot the topic from gamma
+            # Gamma is a M x k matrix
+            # Given the document, it is a k-length array, which approximates 
+            n_sample = 10000
 
-        # This returns a n_plot_words x k matrix
-        sns.heatmap( data[ "beta" ].T, xticklabels = [ ], yticklabels = [ ] )
-        plt.xlabel("Topics", fontsize = 14 )
-        plt.ylabel( "Words", fontsize = 14 )
-        plt.title("topic-word distribution", fontsize = 16 )
+            # Results in n_sample x k matrix, summed over axis 0, which results in a k matrix
+            theta_hat = np.array( [ np.random.dirichlet( data[ "gamma" ][ d ], n_sample ).mean( axis = 0 ) for d in range( M ) ] )
 
-        # Second Figure, plot the topic from gamma
-        # Gamma is a M x k matrix
-        # Given the document, it is a k-length array, which approximates 
-        n_sample = 10000
+            print( data[ "gamma" ].shape  )
 
-        # Results in n_sample x k matrix, summed over axis 0, which results in a k matrix
-        theta_hat = np.array( [ np.random.dirichlet( data[ "gamma" ][ d ], n_sample ).mean( axis = 0 ) for d in range( M ) ] )
+            # Normalize over topic
+            theta_hat /= theta_hat.sum( axis = 1, keepdims = True )
 
-        print( data[ "gamma" ].shape  )
-
-        # Normalize over topic
-        theta_hat /= theta_hat.sum( axis = 1, keepdims = True )
-
-        plt.subplot(122)
-        sns.heatmap( theta_hat, xticklabels=[ ], yticklabels = [ ] )
-        plt.xlabel( "Topics"    , fontsize = 14)
-        plt.ylabel( "Documents" , fontsize = 14 )
-        plt.title( "document-topic distribution", fontsize = 16)
-        plt.tight_layout()
-        plt.show( )
+            plt.subplot(122)
+            sns.heatmap( theta_hat, xticklabels=[ ], yticklabels = [ ] )
+            plt.xlabel( "Topics"    , fontsize = 14)
+            plt.ylabel( "Documents" , fontsize = 14 )
+            plt.title( "document-topic distribution", fontsize = 16)
+            plt.tight_layout()
+            plt.show( )
