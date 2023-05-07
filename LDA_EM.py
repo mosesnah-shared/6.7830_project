@@ -1,5 +1,6 @@
 # %% Import the necessary libraries
 import os
+import time
 import nltk
 import pickle
 import argparse
@@ -22,7 +23,6 @@ from nltk.corpus import reuters
 # [REF] https://stackoverflow.com/questions/21228076/the-precision-of-scipy-special-gammaln
 from scipy.special import psi, polygamma, gammaln
 import scipy.io
-
 
 # %% Define stopwords not included as a vocabularies
 
@@ -300,7 +300,7 @@ if __name__ == "__main__":
     # Get argument parser to automize the script
     parser = argparse.ArgumentParser( )
     parser.add_argument( '--run_train' , action='store_true'       )   # To train the LDA model
-    parser.add_argument( '--plot'      , action='store_true'       )   # To train the LDA model
+    parser.add_argument( '--plot'      , action='store_true'       )   # To plot  the LDA model
     parser.add_argument( '--n_train'   , type = int, default = 700 )   # The number of reuters' documents used for the training
     parser.add_argument( '--n_topics'  , type = int, default = 3   )   # The number of topics
 
@@ -312,7 +312,6 @@ if __name__ == "__main__":
     is_train = args.run_train
     is_plot  = args.plot
     k        = args.n_topics
-
 
     # There are already parsed vocabs from n_train articles
     tmp_name = "vocabs/vocab" + str( ntrain ) + ".pkl"
@@ -391,6 +390,8 @@ if __name__ == "__main__":
         # The list of lb 
         lb_arr = [ ]
 
+        start = time.time()
+
         for i in range( niter ): 
 
             # store old value
@@ -411,17 +412,20 @@ if __name__ == "__main__":
 
             lb_arr.append( L )
 
-        print( "Training Complete" )
+        end = time.time()
+
+        print( "Training Complete, Ellapsed Time: ", end - start )
         
+
         # Once the training is complete, save the alpha, beta, gamma, phi, and other variables 
-        scipy.io.savemat( "trained/trained_v" + str( ntrain ) + "_LDA_EM.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
+        scipy.io.savemat( "tmp/trained_v" + str( ntrain ) + "_LDA_EM.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
 
     # If no training, then load the trained data and plot the data
     else: 
 
         # Load the data file
         # Code should be set before hand
-        file_name = "trained/trained_v" + str( ntrain ) + "_LDA_EM.mat"
+        file_name = "dataset/set1/trained_v" + str( ntrain ) + "_LDA_EM.mat"
         data = scipy.io.loadmat( file_name )
         print( "data loaded" )
 
@@ -434,6 +438,8 @@ if __name__ == "__main__":
         d = 1
         print( ' '.join( reuters.words( id_set[ d ] )  ) )
         print( ' '.join( [ idx_word.get( docs[ d ][ i ] ) for i in range( N[ d ] ) ] ) )
+
+        print( data[ "V" ] )
 
         # Get the topic from this document.
         # Get the phi matrix of the d-th document, which is max( N ) x k
