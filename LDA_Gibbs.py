@@ -146,10 +146,11 @@ if __name__ == "__main__":
 
     # Get argument parser to automize the script
     parser = argparse.ArgumentParser( )
-    parser.add_argument( '--run_train' , action='store_true'       )   # To train the LDA model
-    parser.add_argument( '--plot'      , action='store_true'       )   # To plot  the LDA model
-    parser.add_argument( '--n_train'   , type = int, default = 700 )   # The number of reuters' documents used for the training
-    parser.add_argument( '--n_topics'  , type = int, default = 3   )   # The number of topics
+    parser.add_argument( '--run_train' , action='store_true'        )   # To train the LDA model
+    parser.add_argument( '--plot'      , action='store_true'        )   # To plot  the LDA model
+    parser.add_argument( '--n_train'   , type = int, default = 700  )   # The number of reuters' documents used for the training
+    parser.add_argument( '--n_topics'  , type = int, default = 3    )   # The number of topics
+    parser.add_argument( '--n_samples' , type = int, default = 2000 )   # The number of reuters' documents used for the training
 
     args = parser.parse_args( )
 
@@ -202,7 +203,7 @@ if __name__ == "__main__":
     M = len( N )
 
     # The number of Gibbs sampling 
-    n_gibbs = 2000
+    n_gibbs = args.n_samples
 
     # The alpha and eta (beta for Eq. 6) for the Gibbs Sampling
     # Once alpha and eta are determined, it is not modified
@@ -296,13 +297,14 @@ if __name__ == "__main__":
             print( f"TOPIC {i+1:02}: { n_most_important( tmp, vocab, 20 ) }")            
 
         # Once the training is complete, save the alpha, beta, gamma, phi, and other variables 
-        scipy.io.savemat( "tmp/trained_v" + str( ntrain ) + "_LDA_Gibbs.mat", { "beta": beta, "theta":theta, "n_iw": n_iw, "n_di":n_di, "M": M, "N": N, "V": V, "ntrain": ntrain } )
+        scipy.io.savemat( "tmp/trained_v" + str( ntrain ) + "_" + str( n_gibbs ) + "_LDA_Gibbs.mat", { "beta": beta, "theta":theta, "n_iw": n_iw, "n_di":n_di, "M": M, "N": N, "V": V, "ntrain": ntrain } )
 
     else:
 
         # Load the data file
         # Code should be set before hand
-        file_name = "dataset/set1/trained_v" + str( ntrain ) + "_LDA_Gibbs1.mat"
+        # file_name = "dataset/set1/trained_v" + str( ntrain ) + "_LDA_Gibbs1.mat"
+        file_name = "dataset/set4/trained_v500_4000_LDA_Gibbs.mat"
         data = scipy.io.loadmat( file_name )
         print( "data loaded" )
 

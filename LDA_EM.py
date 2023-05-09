@@ -384,7 +384,7 @@ if __name__ == "__main__":
         niter = 1000
 
         # The tolerance to check the L convergence
-        tol = 0.01
+        tol = 0.1
         L   = -np.inf
 
         # The list of lb 
@@ -418,7 +418,7 @@ if __name__ == "__main__":
         
 
         # Once the training is complete, save the alpha, beta, gamma, phi, and other variables 
-        scipy.io.savemat( "tmp/trained_v" + str( ntrain ) + "_LDA_EM.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
+        scipy.io.savemat( "tmp/trained_v" + str( ntrain ) + "_" + str( k ) + "_LDA_EM.mat", { "alpha": alpha, "beta": beta, "gamma":gamma, "phi": phi, "lb_arr" : lb_arr, "M": M, "N": N, "V": V, "ntrain": ntrain } )
 
     # If no training, then load the trained data and plot the data
     else: 
