@@ -304,7 +304,7 @@ if __name__ == "__main__":
         # Load the data file
         # Code should be set before hand
         # file_name = "dataset/set1/trained_v" + str( ntrain ) + "_LDA_Gibbs1.mat"
-        file_name = "dataset/set4/trained_v500_4000_LDA_Gibbs.mat"
+        file_name = "dataset/set4/trained_v700_50_LDA_Gibbs.mat"
         data = scipy.io.loadmat( file_name )
         print( "data loaded" )
 
